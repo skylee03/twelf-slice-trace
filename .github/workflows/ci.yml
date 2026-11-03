@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  unit:
+    name: Python unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -p 'test_unit.py' -v
+
+  twelf-trace:
+    name: Twelf trace integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SML/NJ
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y smlnj
+          command -v sml
+
+      - name: Build patched Twelf
+        run: ./scripts/build-twelf-trace.sh
+
+      - name: Export Twelf server path
+        run: |
+          test -x "$PWD/.twelf-src/bin/twelf-server"
+          echo "TWELF_SERVER=$PWD/.twelf-src/bin/twelf-server" >> "$GITHUB_ENV"
+
+      - name: Run all tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Run source-fallback self-test
+        run: python selftest.py
+
+      - name: Run typing-trace self-test
+        run: python selftest.py --trace

@@ -233,10 +233,22 @@ TWELF_SERVER=/path/to/twelf-server python3 selftest.py --trace
 The trace tests require the patched server; unpatched servers are skipped where
 possible.
 
+## CI
+
+GitHub Actions runs two jobs:
+
+- **Python unit tests** on Python 3.12, with no Twelf dependency;
+- **Twelf trace integration**, which installs SML/NJ from apt, builds the
+  patched Twelf server with `scripts/build-twelf-trace.sh`, then runs the full
+  test suite and both self-test modes.
+
+The workflow is [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 ## Repository layout
 
 ```text
 twelf-proof-slicer/
+├── .github/workflows/ci.yml
 ├── twelf_slicer/
 │   ├── slicer.py        # parser, closures, rendering, Twelf oracle
 │   ├── trace.py         # patched-server trace client
