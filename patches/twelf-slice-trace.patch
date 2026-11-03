@@ -1,0 +1,244 @@
+diff --git a/src/frontend/recon-condec.fun b/src/frontend/recon-condec.fun
+index c7fbabd..21a0e91 100644
+--- a/src/frontend/recon-condec.fun
++++ b/src/frontend/recon-condec.fun
+@@ -55,6 +55,9 @@ struct
+   *)
+   (* should printing of result be moved to frontend? *)
+   (* Wed May 20 08:08:50 1998 -fp *)
++  fun traceKind cd =
++      if IntSyn.conDecUni cd = IntSyn.Kind then "type_family" else "object"
++
+   fun condecToConDec (condec(name, tm), Paths.Loc (fileName, r), abbFlag) =
+       let
+         val _ = Names.varReset IntSyn.Null
+@@ -70,9 +73,13 @@ struct
+         val _ = if !Global.chatter >= 3
+                   then Msg.message ((Timers.time Timers.printing Print.conDecToString) cd ^ "\n")
+                 else ()
+-        val _ = if !Global.doubleCheck
++        val tracing = SliceTrace.enabled ()
++        val _ = SliceTrace.beginDecl (name, traceKind cd)
++        val _ = SliceTrace.setPhase "type"
++        val _ = if !Global.doubleCheck orelse tracing
+                   then (Timers.time Timers.checking TypeCheck.check) (V', IntSyn.Uni L)
+                 else ()
++        val _ = SliceTrace.clearPhase ()
+       in
+         (SOME(cd), SOME(ocd))
+       end
+@@ -107,10 +114,17 @@ struct
+         val _ = if !Global.chatter >= 3
+                   then Msg.message ((Timers.time Timers.printing Print.conDecToString) cd ^ "\n")
+                 else ()
+-        val _ = if !Global.doubleCheck
+-                  then ((Timers.time Timers.checking TypeCheck.check) (V'', IntSyn.Uni L);
+-                        (Timers.time Timers.checking TypeCheck.check) (U'', V''))
++        val tracing = SliceTrace.enabled ()
++        val _ = SliceTrace.beginDecl (name, traceKind cd)
++        val _ = SliceTrace.setPhase "type"
++        val _ = if !Global.doubleCheck orelse tracing
++                  then (Timers.time Timers.checking TypeCheck.check) (V'', IntSyn.Uni L)
++                else ()
++        val _ = SliceTrace.setPhase "body"
++        val _ = if !Global.doubleCheck orelse tracing
++                  then (Timers.time Timers.checking TypeCheck.check) (U'', V'')
+                 else ()
++        val _ = SliceTrace.clearPhase ()
+         val optConDec = case optName of NONE => NONE | SOME _ => SOME (cd)
+       in
+         (optConDec, SOME(ocd))
+diff --git a/src/frontend/twelf.fun b/src/frontend/twelf.fun
+index a15b50c..cc3b613 100644
+--- a/src/frontend/twelf.fun
++++ b/src/frontend/twelf.fun
+@@ -1290,21 +1290,28 @@ struct
+        ABORT).
+     *)
+     fun loadFile (fileName) =
+-        handleExceptions 0 fileName (withOpenIn fileName)
+-         (fn instream =>
+-          let
+-            val _ = ReconTerm.resetErrors fileName
+-            fun install s = install' ((Timers.time Timers.parsing S.expose) s)
+-            and install' (S.Empty) = OK
+-                (* Origins.installLinesInfo (fileName, Paths.getLinesInfo ()) *)
+-                (* now done in installConDec *)
+-              | install' (S.Cons((Parser.BeginSubsig, _), s')) =
+-                  install (installSubsig (fileName, s'))
+-              | install' (S.Cons(decl, s')) =
+-                (install1 (fileName, decl); install s')
+-          in
+-            install (Parser.parseStream instream)
+-          end)
++        let
++          val _ = SliceTrace.reset ()
++          val status =
++              handleExceptions 0 fileName (withOpenIn fileName)
++               (fn instream =>
++                let
++                  val _ = ReconTerm.resetErrors fileName
++                  fun install s = install' ((Timers.time Timers.parsing S.expose) s)
++                  and install' (S.Empty) = OK
++                      (* Origins.installLinesInfo (fileName, Paths.getLinesInfo ()) *)
++                      (* now done in installConDec *)
++                    | install' (S.Cons((Parser.BeginSubsig, _), s')) =
++                        install (installSubsig (fileName, s'))
++                    | install' (S.Cons(decl, s')) =
++                      (install1 (fileName, decl); install s')
++                in
++                  install (Parser.parseStream instream)
++                end)
++          val _ = SliceTrace.flush ()
++        in
++          status
++        end
+ 
+     (* loadString (str) = status
+        reads and processes declarations from str, issuing
+diff --git a/src/global/slice-trace.sig b/src/global/slice-trace.sig
+new file mode 100644
+index 0000000..898d071
+--- /dev/null
++++ b/src/global/slice-trace.sig
+@@ -0,0 +1,12 @@
++(* Optional dependency trace for the Twelf/LF slicer. *)
++
++signature SLICE_TRACE =
++sig
++  val enabled : unit -> bool
++  val reset : unit -> unit
++  val flush : unit -> unit
++  val beginDecl : string * string -> unit
++  val setPhase : string -> unit
++  val clearPhase : unit -> unit
++  val recordConst : string -> unit
++end;
+diff --git a/src/global/slice-trace.sml b/src/global/slice-trace.sml
+new file mode 100644
+index 0000000..c679b5a
+--- /dev/null
++++ b/src/global/slice-trace.sml
+@@ -0,0 +1,60 @@
++(* Optional dependency trace for the Twelf/LF slicer.
++ *
++ * Enable by setting TWELF_SLICE_TRACE=/path/to/trace.tsv before starting
++ * twelf-server.  The trace is written when loadFile finishes.
++ *)
++
++structure SliceTrace :> SLICE_TRACE =
++struct
++  fun tracePath () = OS.Process.getEnv "TWELF_SLICE_TRACE"
++
++  val decls : (string * string) list ref = ref []
++  val deps : (string * string * string) list ref = ref []  (* phase, decl, ref *)
++  val current : string option ref = ref NONE
++  val phase = ref "type"
++
++  fun enabled () = Option.isSome (tracePath ())
++
++  fun reset () =
++    (decls := [];
++     deps := [];
++     current := NONE;
++     phase := "type")
++
++  fun beginDecl (name, kind) =
++    if enabled () andalso name <> "_" then
++      (decls := (name, kind) :: (!decls);
++       current := SOME name;
++       phase := "type")
++    else
++      current := NONE
++
++  fun setPhase p =
++    if enabled () then phase := p else ()
++
++  fun clearPhase () =
++    if enabled () then phase := "type" else ()
++
++  fun recordConst name =
++    case (!current, tracePath ()) of
++      (SOME d, SOME _) =>
++        if name <> "_" then
++          deps := (!phase, d, name) :: (!deps)
++        else ()
++    | _ => ()
++
++  fun flush () =
++    case tracePath () of
++      NONE => ()
++    | SOME path =>
++        let
++          val out = TextIO.openOut path
++          fun line xs = TextIO.output (out, String.concatWith "\t" xs ^ "\n")
++        in
++          (TextIO.output (out, "# twelf-slice-trace v1\n");
++           List.app (fn (n, k) => line ["decl", n, k]) (List.rev (!decls));
++           List.app (fn (p, d, r) => line [p, d, r]) (List.rev (!deps));
++           TextIO.closeOut out)
++          handle _ => ()
++        end
++end;
+diff --git a/src/global/sources.cm b/src/global/sources.cm
+index fcd7063..d30173d 100644
+--- a/src/global/sources.cm
++++ b/src/global/sources.cm
+@@ -1,9 +1,13 @@
+ Library
+   signature GLOBAL
+   structure Global
++  signature SLICE_TRACE
++  structure SliceTrace
+ is
+ #if defined(NEW_CM)
+   $/basis.cm
+ #endif
+   global.sig
+   global.sml
++  slice-trace.sig
++  slice-trace.sml
+diff --git a/src/typecheck/sources.cm b/src/typecheck/sources.cm
+index 6a36829..655930b 100644
+--- a/src/typecheck/sources.cm
++++ b/src/typecheck/sources.cm
+@@ -7,6 +7,7 @@ is
+ #if defined(NEW_CM)
+   $/basis.cm
+ #endif
++  ../global/sources.cm
+   ../lambda/sources.cm
+   ../print/sources.cm
+   ../paths/sources.cm
+diff --git a/src/typecheck/typecheck.fun b/src/typecheck/typecheck.fun
+index 8bb6fc4..9d562b5 100644
+--- a/src/typecheck/typecheck.fun
++++ b/src/typecheck/typecheck.fun
+@@ -141,13 +141,21 @@ struct
+         in
+           V
+         end
+-      | inferCon (G, I.Const(c)) = I.constType (c)
+-      | inferCon (G, I.Def(d))  = I.constType (d)
+-      | inferCon (G, I.Skonst(c)) = I.constType (c) (* this is just a hack. --cs
+-                                                       must be extended to handle arbitrary
+-                                                       Skolem constants in the right way *)
++      | inferCon (G, I.Const(c)) =
++          (SliceTrace.recordConst (I.conDecName (I.sgnLookup c));
++           I.constType (c))
++      | inferCon (G, I.Def(d)) =
++          (SliceTrace.recordConst (I.conDecName (I.sgnLookup d));
++           I.constType (d))
++      | inferCon (G, I.Skonst(c)) =
++          (SliceTrace.recordConst (I.conDecName (I.sgnLookup c));
++           I.constType (c)) (* this is just a hack. --cs
++                               must be extended to handle arbitrary
++                               Skolem constants in the right way *)
+       (* no case for FVar *)
+-      | inferCon (G, I.FgnConst(cs, conDec)) = I.conDecType(conDec)
++      | inferCon (G, I.FgnConst(cs, conDec)) =
++          (SliceTrace.recordConst (I.conDecName conDec);
++           I.conDecType(conDec))
+ 
+ 
+     and typeCheck (G, (U, V)) =

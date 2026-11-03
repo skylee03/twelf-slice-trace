@@ -13,7 +13,11 @@ Twelf is interesting for this experiment because LF has:
 - a source-level checker that is easy to use as an oracle.
 
 The prototype is intentionally **declaration-level**.  It is not a full
-re-implementation of LF type checking.
+re-implementation of LF type checking.  It has two dependency backends:
+
+- a source-level fallback that matches identifiers in types and bodies;
+- an optional **typing trace** produced by an instrumented `twelf-server`,
+  which records the constants actually visited by the LF type checker.
 
 ## Quick start
 
@@ -21,29 +25,37 @@ Requirements:
 
 - Python 3.10+
 - Twelf with `twelf-server` on `PATH`, or `TWELF_SERVER` pointing at it.
+- For `--trace`: the patched Twelf server from `patches/`.
 
-Build Twelf with SML/NJ if necessary:
+Build the patched server with SML/NJ:
 
 ```bash
 brew install smlnj
-git clone https://github.com/standardml/twelf.git
-cd twelf
-make smlnj
-export TWELF_SERVER="$PWD/bin/twelf-server"
+cd twelf-proof-slicer
+./scripts/build-twelf-trace.sh
+export TWELF_SERVER="$PWD/.twelf-src/bin/twelf-server"
 ```
+
+The script clones Twelf at the commit recorded in the patch, applies
+`patches/twelf-slice-trace.patch`, and runs `make smlnj`.
 
 Run the demo:
 
 ```bash
-cd twelf-proof-slicer
 TWELF_SERVER=/path/to/twelf-server ./run.sh
 ```
 
-Slice a signature:
+Slice a signature using the source fallback:
 
 ```bash
 twelf-slice corpus/nat.elf p_s --mode exact
 twelf-slice corpus/nat.elf p_s --mode statement
+```
+
+Slice using the type-checker trace:
+
+```bash
+twelf-slice corpus/nat.elf p_s --mode exact --trace
 ```
 
 Install as a command:
@@ -52,6 +64,41 @@ Install as a command:
 python3 -m pip install -e .
 twelf-slice --help
 ```
+
+## Typing trace (`--trace`)
+
+The stock Twelf API exposes the checker's yes/no result, but not the constants
+that the checker visits.  `patches/twelf-slice-trace.patch` adds a small
+`SliceTrace` structure and instruments:
+
+- `TypeCheck.inferCon`: every `Const` / `Def` visited during inference is
+  recorded;
+- `ReconConDec`: the current declaration and phase (`type` or `body`) are set
+  around the checker calls;
+- `Twelf.loadFile`: the trace is reset and flushed at file boundaries.
+
+When `TWELF_SLICE_TRACE` is set, the patched server writes a TSV file:
+
+```text
+decl    p_s     object
+type    p_s     plus
+type    p_s     s
+type    p_s     nat
+```
+
+The Python client runs the server with a temporary trace path and replaces the
+source-level edges with these type-checker edges.  The trace is not a full
+derivation tree; it is the set of constants observed during the checking run,
+split into type and body phases.  That is enough for dependency slicing, and it
+is strictly more faithful than identifier matching.
+
+A concrete difference: for `p_s` the source only mentions `plus` and `s`; the
+type checker also infers `nat` for the implicit variables `X`, `Y`, `Z`.  The
+trace records that edge.
+
+There is also a scope-capture regression in `corpus/scope_capture.elf`: the
+source fallback drops both occurrences of `helper`, while the trace keeps the
+free one.  The exact source slice fails to check; the traced slice succeeds.
 
 ## Modes
 
@@ -104,11 +151,11 @@ twelf-slice corpus/nat.elf p_s --mode exact --minimize
 
 ## What counts as a dependency?
 
-For each declaration, the slicer extracts identifiers from its type and body.
-Only identifiers that name declared constants become graph edges.  Bound
-variables in `{x:A}` and `[x:A]` are excluded.  This avoids the usual
-false-positive where a local variable has the same name as a top-level constant;
-see `corpus/false_positive.elf`.
+With `--trace`, dependencies are the constants visited by the type checker
+(`TypeCheck.inferCon`), split into type and body phases.  Without `--trace`, the
+slicer falls back to source-level identifier extraction: identifiers from the
+type and body are kept only when they name declared constants; bound variables
+in `{x:A}` and `[x:A]` are removed.
 
 The LF-specific part is the treatment of type families:
 
@@ -141,8 +188,10 @@ twelf-slice: Twelf check OK
 
 ## Evaluation corpus
 
-The corpus contains eight small signatures.  The numbers below come from
-`selftest.py` and count non-blank lines, excluding the generated header.
+The corpus contains nine small signatures.  The eight baseline cases work with
+either backend; `scope_capture.elf` is a trace-only regression.  The numbers
+below come from `selftest.py` and count non-blank lines, excluding the generated
+header.
 
 | file | target | exact | statement |
 |---|---|---:|---:|
@@ -154,14 +203,16 @@ The corpus contains eight small signatures.  The numbers below come from
 | `false_positive.elf` | `target` | 9 → 3 (66.7%) | 9 → 2 (77.8%) |
 | `chain.elf` | `target` | 13 → 8 (38.5%) | 13 → 5 (61.5%) |
 | `judgment.elf` | `of_app` | 15 → 10 (33.3%) | 15 → 5 (66.7%) |
+| `scope_capture.elf` (trace) | `target` | 10 → 6 (40.0%) | 10 → 2 (80.0%) |
 
-Mean reduction:
+Mean reduction with the typing trace:
 
-- exact: **49.2%** (range 30.8%–66.7%);
-- statement: **71.5%** (range 61.5%–84.6%).
+- exact: **48.2%** (range 30.8%–66.7%);
+- statement: **72.5%** (range 61.5%–84.6%).
 
-All sixteen slices pass `twelf-server`.  This is a sanity corpus, not a
-benchmark.
+All eighteen traced slices pass `twelf-server`.  On `scope_capture.elf`, the
+source fallback's exact slice fails because it drops the free `helper`; the
+traced slice succeeds.  This is a sanity corpus, not a benchmark.
 
 ## Tests
 
@@ -176,7 +227,11 @@ Integration tests and the end-to-end self-test need `twelf-server`:
 ```bash
 TWELF_SERVER=/path/to/twelf-server python3 -m unittest discover -s tests -v
 TWELF_SERVER=/path/to/twelf-server python3 selftest.py
+TWELF_SERVER=/path/to/twelf-server python3 selftest.py --trace
 ```
+
+The trace tests require the patched server; unpatched servers are skipped where
+possible.
 
 ## Repository layout
 
@@ -184,8 +239,13 @@ TWELF_SERVER=/path/to/twelf-server python3 selftest.py
 twelf-proof-slicer/
 ├── twelf_slicer/
 │   ├── slicer.py        # parser, closures, rendering, Twelf oracle
+│   ├── trace.py         # patched-server trace client
 │   └── cli.py           # twelf-slice entry point
-├── corpus/              # eight small .elf signatures
+├── patches/
+│   └── twelf-slice-trace.patch
+├── scripts/
+│   └── build-twelf-trace.sh
+├── corpus/              # nine small .elf signatures
 ├── tests/
 │   ├── test_unit.py
 │   └── test_integration.py
@@ -197,9 +257,12 @@ twelf-proof-slicer/
 
 ## Limitations
 
-- Dependencies are extracted from source-level identifier occurrences, not from
-  a typing derivation.  This is closer to LF than `.glob`-based Rocq slicing,
-  but it is still not the paper's full type-directed analysis.
+- `--trace` dependencies come from the constants visited by Twelf's type
+  checker, split into type and body phases.  This is not a full derivation tree:
+  it records observed constants, not every rule application or a proof object.
+  Without `--trace`, dependencies are source-level identifier occurrences.
+- The patched Twelf server is required for trace mode.  The patch is tied to a
+  tested Twelf commit and may need rebasing for newer Twelf versions.
 - The parser covers the constructor/definition/directive fragment used by the
   corpus.  It does not implement the full Twelf grammar, `%theorem`/`%prove`
   blocks, modules, or all operator forms.

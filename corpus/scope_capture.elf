@@ -1,0 +1,14 @@
+%% The bound helper shadows the top-level helper inside the lambda, but the
+%% second argument is the top-level helper.  Source-level identifier matching
+%% drops both occurrences; the typing trace keeps the free one.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+helper : nat.
+
+app : (nat -> nat) -> nat -> nat.
+
+mixed : nat = app ([helper:nat] s helper) helper.
+
+target : nat = mixed.

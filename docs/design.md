@@ -13,9 +13,9 @@ dependencies.  LF is smaller and more explicit:
 - `twelf-server` gives a simple yes/no oracle for a candidate slice.
 
 This makes it easier to relate a declaration-level slicer to the paper's
-type-directed slicing.  It does **not** make the prototype a full
-type-directed slicer: the implementation still uses identifier occurrences,
-not a typing derivation.
+type-directed slicing.  The optional `--trace` backend goes one step further
+and instruments Twelf's type checker, so dependency edges are the constants
+actually visited during type checking, not source-level identifier matches.
 
 ## LF mapping
 
@@ -30,13 +30,34 @@ not a typing derivation.
 | proof skeleton | type-only closure, bodies dropped |
 | compiler oracle | `twelf-server` `loadFile` |
 
+## Typing trace
+
+The patch adds `src/global/slice-trace.{sig,sml}`, instruments three places,
+and writes a TSV file when `TWELF_SLICE_TRACE` is set:
+
+1. `TypeCheck.inferCon` records every `Const`, `Def`, `Skonst`, and foreign
+   constant visited during inference.
+2. `ReconConDec.condecToConDec` sets the current declaration and the phase
+   (`type` or `body`) before calling `TypeCheck.check`.  Trace mode forces the
+   double-check even when `Global.doubleCheck` is false.
+3. `Twelf.loadFile` resets the trace before parsing and flushes it after the
+   file is processed.
+
+The trace is therefore a record of the type checker's observations, not a
+source-level approximation.  It is still not a full derivation tree: it records
+which constants were visited, not every typing-rule application.  For slicing,
+that is the relevant part.
+
 ## Algorithm
 
 1. Strip Twelf comments while preserving `%mode`-style directives.
 2. Split the signature into declarations at top-level periods.
 3. Parse each declaration into a name, type, and optional body.
-4. Extract identifiers from the type and body.  Remove bound variables from
-   `{x:A}` and `[x:A]`; keep only identifiers that name declared constants.
+4. Obtain dependency edges:
+   - with `--trace`: run the patched server and take edges from
+     `TypeCheck.inferCon`, split into type and body phases;
+   - without `--trace`: extract identifiers from the type and body, remove
+     bound variables from `{x:A}` and `[x:A]`, and keep only declared names.
 5. Identify type families (`... -> type`) and constructors (result head `F`).
 6. Record `%mode F ...` as a logic-program marker.
 7. Compute one of two closures:
@@ -78,9 +99,10 @@ dependency cone, but it is not a proof-preserving reduction.
 
 ## What is still missing?
 
-- **Typing derivation.**  The slicer sees identifier occurrences, not the full
-  LF typing derivation.  A stricter implementation would instrument Twelf's
-  type checker or use a formalized LF checker.
+- **Full derivation tree.**  The trace records constants visited by the type
+  checker, not a complete derivation object or every rule application.  A
+  stricter implementation could instrument the checker to build a full
+  derivation and slice over typing rules directly.
 - **Definitional equality.**  LF has beta/eta and transparent definitions.
   Removing a definition body can change conversion.  Statement mode is
   therefore a syntactic skeleton, not a semantics-preserving one.
@@ -98,14 +120,15 @@ dependency cone, but it is not a proof-preserving reduction.
 | | Rocq prototype | Twelf prototype |
 |---|---|---|
 | core | CIC | LF |
-| dependency source | `.glob` + identifiers | identifier occurrences |
+| dependency source | `.glob` + identifiers | type-checker trace or identifiers |
 | tactics | common | absent from core |
 | conversion | complex | simpler, but still present |
 | exact slice | reachable proofs | type/body closure + mode constructors |
 | skeleton | `Admitted` | bodies dropped |
 | oracle | `rocq compile` | `twelf-server` |
-| main gap | conversion-aware analysis | typing derivation and full syntax |
+| main gap | conversion-aware analysis | full derivation object and full syntax |
 
 The Twelf prototype is closer to the paper in the sense that the object language
-is small and terms are explicit.  It is still a dependency slicer rather than a
-full type-directed slicer.
+is small and terms are explicit, and the trace backend takes dependencies from
+the type checker.  It is still a dependency slicer rather than a full
+rule-by-rule type-directed slicer.

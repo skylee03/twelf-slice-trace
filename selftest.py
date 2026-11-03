@@ -23,6 +23,7 @@ from twelf_slicer.slicer import (
     run_twelf_check,
     statement_closure,
 )
+from twelf_slicer.trace import apply_trace, collect_trace
 
 ROOT = Path(__file__).resolve().parent
 CORPUS = ROOT / "corpus"
@@ -38,6 +39,10 @@ CASES = [
     ("judgment.elf", "of_app"),
 ]
 
+# This case defeats the source-level identifier fallback: the bound variable
+# shadows the top-level constant, but the free occurrence is a real dependency.
+TRACE_ONLY_CASES = [("scope_capture.elf", "target")]
+
 
 def main() -> int:
     server = os.environ.get("TWELF_SERVER")
@@ -45,12 +50,15 @@ def main() -> int:
         print("TWELF_SERVER is not set", file=sys.stderr)
         return 2
 
+    use_trace = "--trace" in sys.argv[1:]
+    label = "trace+" if use_trace else ""
     print(f"{'file':22} {'target':14} {'mode':10} {'lines':>12} {'red.':>7}  check")
     print("-" * 78)
     reductions = {"exact": [], "statement": []}
     failures = 0
 
-    for filename, target in CASES:
+    cases = CASES + (TRACE_ONLY_CASES if use_trace else [])
+    for filename, target in cases:
         source = (CORPUS / filename).read_text(encoding="utf-8")
         sig = parse_signature(source)
         before = line_count(source)
@@ -62,6 +70,15 @@ def main() -> int:
             failures += 1
             continue
 
+        if use_trace:
+            try:
+                trace, _ = collect_trace(CORPUS / filename, server=server)
+                apply_trace(sig, trace)
+            except SlicerError as exc:
+                print(f"{filename}: trace failed: {exc}", file=sys.stderr)
+                failures += 1
+                continue
+
         for mode, closure in (("exact", exact_closure), ("statement", statement_closure)):
             keep = closure(sig, target)
             sliced = render(sig, keep, mode)
@@ -71,7 +88,7 @@ def main() -> int:
             result = check_text(sliced, server=server)
             ok = "OK" if result.ok else "FAIL"
             print(
-                f"{filename:22} {target:14} {mode:10} "
+                f"{filename:22} {target:14} {label + mode:10} "
                 f"{before:>5} -> {after:<3} {pct:>6.1f}%  {ok}"
             )
             if not result.ok:

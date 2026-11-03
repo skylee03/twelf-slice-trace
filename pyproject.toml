@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "twelf-proof-slicer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dependency-directed slicing for Twelf/LF signatures"
 readme = "README.md"
 requires-python = ">=3.10"

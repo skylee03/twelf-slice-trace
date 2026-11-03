@@ -1,5 +1,6 @@
 """Twelf/LF proof-slicing prototype."""
 
+from .trace import Trace, apply_trace, collect_trace, parse_trace
 from .slicer import (
     CheckResult,
     Signature,
@@ -34,6 +35,10 @@ __all__ = [
     "statement_closure",
     "write_dot",
     "write_mermaid",
+    "Trace",
+    "apply_trace",
+    "collect_trace",
+    "parse_trace",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

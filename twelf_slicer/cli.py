@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
+from .trace import apply_trace, collect_trace
 from .slicer import (
     SlicerError,
     check_text,
@@ -41,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dot", type=Path, help="write dependency graph as DOT")
     p.add_argument("--mermaid", type=Path, help="write dependency graph as Mermaid")
     p.add_argument("--minimize", action="store_true", help="greedily remove blocks while Twelf accepts the result")
+    p.add_argument(
+        "--trace",
+        action="store_true",
+        help="use the patched Twelf type-checker trace instead of source identifiers",
+    )
     p.add_argument("--server", help="path to twelf-server (default: $TWELF_SERVER or PATH)")
     p.add_argument("--no-check", action="store_true", help="do not run twelf-server on the slice")
     p.add_argument("--check-input", action="store_true", help="check the original file before slicing")
@@ -78,12 +84,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"twelf-slice: unknown target {args.target!r}. Known names: {names}", file=sys.stderr)
         return 2
 
-    if args.check_input and not args.no_check:
+    if args.check_input and not args.no_check and not args.trace:
         result = run_twelf_check(args.file, server=args.server)
         if not result.ok:
             print("twelf-slice: input does not pass Twelf check:", file=sys.stderr)
             print(tail(result.output), file=sys.stderr)
             return 1
+
+    trace = None
+    if args.trace:
+        try:
+            trace, _ = collect_trace(args.file, server=args.server)
+        except SlicerError as exc:
+            print(f"twelf-slice: {exc}", file=sys.stderr)
+            return 1
+        apply_trace(sig, trace)
 
     mode = "statement" if args.mode == "skeleton" else args.mode
     if mode == "exact":
@@ -129,10 +144,11 @@ def main(argv: list[str] | None = None) -> int:
                 if b.index in selected and b.kind == "decl" and b.name and b.name != "_"
             ]
         )
+    trace_note = f" trace_decls={len(trace.decls)}" if trace is not None else ""
     print(
         f"twelf-slice: target={args.target} mode={mode} "
         f"decls={decls_after} lines={before}->{after} "
-        f"(-{reduction(before, after):.1f}%)",
+        f"(-{reduction(before, after):.1f}%){trace_note}",
         file=sys.stderr if not args.output else sys.stdout,
     )
 
