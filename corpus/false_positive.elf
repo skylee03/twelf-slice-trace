@@ -1,0 +1,13 @@
+%% A bound variable named helper must not create a dependency on the
+%% top-level constant helper.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+helper : nat.
+id_nat : nat -> nat = [helper:nat] s helper.
+
+target : nat -> nat = [helper:nat] s helper.
+
+unused : nat.

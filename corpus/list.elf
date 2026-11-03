@@ -1,0 +1,21 @@
+%% A small list signature with one unused family.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+list : type.
+nil : list.
+cons : nat -> list -> list.
+
+append : list -> list -> list -> type.
+%mode append +L1 +L2 -L3.
+append_nil : append nil L L.
+append_cons : append (cons X L1) L2 (cons X L3) <- append L1 L2 L3.
+%worlds () (append L1 L2 L3).
+%total L1 (append L1 L2 L3).
+
+%% Not reachable from append/append_cons.
+reverse : list -> list -> type.
+rev_nil : reverse nil nil.
+rev_cons : reverse (cons X L) R <- reverse L R.

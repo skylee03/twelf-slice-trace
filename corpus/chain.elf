@@ -1,0 +1,18 @@
+%% A chain of helper constructors; target depends on two of them.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+le : nat -> nat -> type.
+le_z : le z X.
+le_s : le (s X) (s Y) <- le X Y.
+
+lt : nat -> nat -> type.
+lt_s : lt X (s Y) <- le X Y.
+
+target : lt z (s z).
+target = lt_s le_z.
+
+unused : nat -> type.
+u : unused z.

@@ -1,0 +1,24 @@
+%% Booleans and a small decision procedure.
+
+bool : type.
+true : bool.
+false : bool.
+
+not : bool -> bool -> type.
+%mode not +B -B'.
+not_t : not true false.
+not_f : not false true.
+%worlds () (not B B').
+%total B (not B B').
+
+and : bool -> bool -> bool -> type.
+%mode and +A +B -C.
+and_tt : and true true true.
+and_tf : and true false false.
+and_ft : and false true false.
+and_ff : and false false false.
+%worlds () (and A B C).
+%total A (and A B C).
+
+unused : bool -> type.
+u : unused true.

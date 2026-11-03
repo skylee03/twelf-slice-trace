@@ -1,0 +1,20 @@
+%% A tiny typing judgment; the target proof uses only two rules.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+tp : type.
+nat_tp : tp.
+
+exp : type.
+num : nat -> exp.
+app : exp -> exp -> exp.
+
+of : exp -> tp -> type.
+%mode of +E -T.
+of_num : of (num N) nat_tp.
+of_app : of (app E1 E2) T <- of E1 T <- of E2 T.
+
+unused : exp -> type.
+u : unused (num z).

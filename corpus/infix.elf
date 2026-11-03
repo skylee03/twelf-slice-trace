@@ -1,0 +1,19 @@
+%% Operator declarations are syntax, not proof dependencies.
+
+i : type.
+o : type.
+
+imp : o -> o -> o.
+%infix right 10 imp.
+and : o -> o -> o.
+%infix right 11 and.
+
+nd : o -> type.
+impi : (nd A -> nd B) -> nd (A imp B).
+impe : nd (A imp B) -> nd A -> nd B.
+andi : nd A -> nd B -> nd (A and B).
+ande1 : nd (A and B) -> nd A.
+ande2 : nd (A and B) -> nd B.
+
+unused : o -> type.
+u : unused (A imp A).

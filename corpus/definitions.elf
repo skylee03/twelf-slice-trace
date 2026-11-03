@@ -1,0 +1,17 @@
+%% Definitions are transparent in LF; the statement slice makes them opaque.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+one : nat = s z.
+two : nat = s one.
+
+plus : nat -> nat -> nat -> type.
+%mode plus +X +Y -Z.
+p_z : plus z Y Y.
+p_s : plus (s X) Y (s Z) <- plus X Y Z.
+%worlds () (plus X Y Z).
+%total X (plus X Y Z).
+
+unused : nat = two.

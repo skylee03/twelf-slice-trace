@@ -1,0 +1,16 @@
+%% Natural numbers, addition, and an unreachable family.
+
+nat : type.
+z : nat.
+s : nat -> nat.
+
+plus : nat -> nat -> nat -> type.
+%mode plus +X +Y -Z.
+p_z : plus z Y Y.
+p_s : plus (s X) Y (s Z) <- plus X Y Z.
+%worlds () (plus X Y Z).
+%total X (plus X Y Z).
+
+even : nat -> type.
+even_z : even z.
+even_s : even (s (s X)) <- even X.
